@@ -2,6 +2,10 @@ import pytest
 from os import path,mkdir
 from shutil import rmtree
 from multi_rsync.multi_rsync import RemoteConnect
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger()
 
 top_dir_original = "/tmp/testrun_original"
 top_dir_copy = "/tmp/testrun_copy"
@@ -28,7 +32,9 @@ dir_structure = {"top": {
     },
     "mid4": ["file1","file2"],
     "mid5": ["file1","file2"]
-    }}
+    },
+    "top2":["file1","file2"]
+}
 
 def create_dirstructure(top_dir,structure):
     try:
@@ -56,9 +62,11 @@ def prepare_dirs():
 def test(prepare_dirs):
     for tree_length in range(len(expected_tree)):
         rcon.max_depth = tree_length
-        rcon._get_dir()
+        rcon._transfer_dir(rcon.max_depth)
         expected_dirs = path.join(top_dir_copy, *expected_tree[:tree_length])
         if tree_length < len(expected_tree):
             unexpected_dirs = path.join(top_dir_copy,*expected_tree[:tree_length+1])
+            logger.info(unexpected_dirs + " should not exist yet.")
             assert path.isdir(unexpected_dirs) == False
+        logger.info(expected_dirs + " should exist.")
         assert path.isdir(expected_dirs) == True
