@@ -34,7 +34,7 @@ class RemoteConnect:
 
     def __init__(self, host, user, remote_path, local_path,
                  port=None, password=None, password_file=None, identityfile=None, testmode=False,
-                 maxdepth=2, maxprocesses=cpu_count(), rsync_args=""):
+                 maxdepth=2, maxprocesses=cpu_count(), rsync_args=None):
         self.host = host
         self.port = port
         self.user = user
@@ -51,7 +51,7 @@ class RemoteConnect:
         self.max_depth = maxdepth
         self.rsync_binary_path = spawn.find_executable("rsync")
         self.ssh_binary_path = spawn.find_executable("ssh")
-        self.additional_rsync_args = rsync_args
+        self.additional_rsync_args = rsync_args if rsync_args else ""
         self.top_node = Node(self.local_path)
         self.pool = ProcessPool(maxprocesses)
 
