@@ -8,9 +8,12 @@ from pathos.multiprocessing import ProcessingPool as Pool
 from pathos.multiprocessing import cpu_count
 import atexit
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
-logger.addHandler(logging.StreamHandler())
+sh = logging.StreamHandler()
+sh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(sh)
 
 
 class ProcessPool():
@@ -20,6 +23,7 @@ class ProcessPool():
 
     def start(self, fuction, local_dirs, remote_dirs):
         atexit.register(self.exit)
+        logger.info("Starting parallel rsync from a total of {} dirs ({} ...)".format(len(remote_dirs),remote_dirs[:3]))
         logger.info("Started with parallelization")
         results = self.pool.map(fuction, list(zip(local_dirs, remote_dirs)))
         logger.info("Stopped with results: {}".format(results))
@@ -118,7 +122,7 @@ class RemoteConnect:
         :return: returns string to be used in rsync --exclude parameter
         :rtype:
         """
-        logger.info("Translating depth: {}".format(depth))
+        logger.debug("Translating depth: {}".format(depth))
         rsync_arg = ["/*"]
         for _ in range(depth):
             rsync_arg.append("/*")
@@ -151,7 +155,6 @@ class RemoteConnect:
             ssh_command = "-e \"{} -i {}\"".format(self.ssh_binary_path, self.identityfile)
         exclude_command = ""
         if depth is not None:
-            logger.info("depth is {}".format(depth))
             depth = self._translate_depth_to_string(depth)
             exclude_command = "--exclude=\"{}\"".format(depth)
         sshpass_command = ""
