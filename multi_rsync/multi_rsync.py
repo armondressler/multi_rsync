@@ -1,12 +1,12 @@
 from functools import partial
-
 from anytree import Node, LevelOrderGroupIter
 import argparse
 from distutils import spawn
 from subprocess import call
 from os import path, listdir, sep
 import logging
-from multiprocessing import Pool,cpu_count
+from pathos.multiprocessing import ProcessingPool as Pool
+from pathos.multiprocessing import cpu_count
 import atexit
 
 logging.basicConfig(level=logging.INFO)
@@ -22,8 +22,7 @@ class ProcessPool():
     def start(self, fuction, local_dirs, remote_dirs):
         atexit.register(self.exit)
         logger.info("Started with parallelization")
-        print(list(zip(local_dirs, remote_dirs)))
-        results = self.pool.map_async(fuction, list(zip(local_dirs, remote_dirs)))
+        results = self.pool.map(fuction, list(zip(local_dirs, remote_dirs)))
         logger.info("Stopped with results: {}".format(results))
         return results
 
@@ -68,12 +67,11 @@ class RemoteConnect:
         self._map_top_dirs(self.top_node)
 
     def synchronize_directories(self):
-        transfer_function = self._transfer_dir
-        if self.testmode:
-            transfer_function = partial(_transfer_dir,testmode=False,password=self.password)
+        transfer_function = self._transfer_dir_helper
         return self.pool.start(transfer_function,
                                self._get_lowest_dirs(),
-                               self._get_lowest_dirs(remote_dirs=True))
+                               self._get_lowest_dirs(remote_dirs=True)
+                               )
 
     def _get_password_from_file(self):
         with open(self.password_file, "r") as pwfile:
@@ -120,12 +118,18 @@ class RemoteConnect:
         :return: returns string to be used in rsync --exclude parameter
         :rtype:
         """
+        logger.info("Translating depth: {}".format(depth))
         rsync_arg = ["/*"]
         for _ in range(depth):
             rsync_arg.append("/*")
         return "".join(rsync_arg)
 
-    def _transfer_dir(self, depth=None, remote_path=None, local_path=None):
+    def _transfer_dir_helper(self, *args):
+        local_path=args[0][0]
+        remote_path=args[0][1]
+        return self._transfer_dir(local_path=local_path,remote_path=remote_path,depth=None)
+
+    def _transfer_dir(self, local_path=None, remote_path=None, depth=None):
         """
         Do the rsync call. If in testmode, do a local to local transfer only
         :param remote_path: remote path to synchronize, (only subdirs/files below this path are transferred)
@@ -141,6 +145,7 @@ class RemoteConnect:
             remote_path = self.remote_path
         if local_path is None:
             local_path = self.local_path
+
         ssh_command = ""
         if self.identityfile:
             ssh_command = "-e \"{} -i {}\"".format(self.ssh_binary_path, self.identityfile)
@@ -172,42 +177,8 @@ class RemoteConnect:
                 local_path=local_path)
 
         logger.info("calling rsync with {}".format(rsync_call).replace(self.password,"XXX"))
-        call(rsync_call, shell=True)
+        return call(rsync_call, shell=True)
 
-
-def _transfer_dir(*args, identityfile=None,rsync_binary_path="/usr/bin/rsync",
-                  ssh_binary_path="/usr/bin/ssh",sshpass_binary_path="/usr/bin/sshpass",
-                  user=None,host=None,password=None, testmode=True):
-    local_path = args[0][0]
-    remote_path = args[0][1]
-    ssh_command = ""
-    if identityfile:
-        ssh_command = "-e \"{} -i {}\"".format(ssh_binary_path, identityfile)
-    exclude_command = ""
-
-    sshpass_command = ""
-    if password:
-        sshpass_command = "{} -p {} ".format(sshpass_binary_path, password)
-
-    if not testmode:
-        rsync_call = "{sshpass_com} {rsync} -ar {ssh_com} {user}@{host}:{remote_path}/ {local_path}".format(
-            rsync=rsync_binary_path,
-            user=user,
-            host=host,
-            sshpass_com=sshpass_command,
-            ssh_com=ssh_command,
-            exclude_com=exclude_command,
-            remote_path=remote_path,
-            local_path=local_path)
-    else:
-        rsync_call = "{rsync} -ar {remote_path}/ {local_path}".format(
-            rsync=rsync_binary_path,
-            exclude_com=exclude_command,
-            remote_path=remote_path,
-            local_path=local_path)
-
-    logger.info("calling rsync with {}".format(rsync_call))
-    return call(rsync_call, shell=True)
 
 
 def parse_args():
@@ -240,7 +211,11 @@ def main():
                          maxdepth=args.max_depth,
                          testmode=args.testmode)
     rcon.initialize_directories()
-    rcon.synchronize_directories()
+    if any(rcon.synchronize_directories()):
+        logger.error("ERROR, some rsync call returned bad status.")
+    else:
+        logger.info("Every rsync run successful.")
+
 
 
 if __name__ == '__main__':
