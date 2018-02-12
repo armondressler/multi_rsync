@@ -1,9 +1,8 @@
-from functools import partial
 from anytree import Node, LevelOrderGroupIter
 import argparse
 from distutils import spawn
 from subprocess import call
-from os import path, listdir, sep
+from os import path, listdir
 import logging
 from pathos.multiprocessing import ProcessingPool as Pool
 from pathos.multiprocessing import cpu_count
