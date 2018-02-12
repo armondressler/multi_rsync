@@ -1,3 +1,5 @@
+from functools import partial
+
 from anytree import Node, LevelOrderGroupIter
 import argparse
 from distutils import spawn
@@ -5,6 +7,7 @@ from subprocess import call
 from os import path, listdir, sep
 import logging
 from multiprocessing import Pool,cpu_count
+import atexit
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
@@ -13,21 +16,20 @@ logger.addHandler(logging.StreamHandler())
 
 class ProcessPool():
     def __init__(self, maxprocesses):
-        """
-        :param maxdepth:
-        :type maxdepth:
-        """
         self.pool = Pool(processes=maxprocesses)
         logger.info("Initialized process pool of size {}".format(maxprocesses))
 
     def start(self, fuction, local_dirs, remote_dirs):
+        atexit.register(self.exit)
         logger.info("Started with parallelization")
         print(list(zip(local_dirs, remote_dirs)))
-        results = self.pool.map(fuction, list(zip(local_dirs, remote_dirs)))
-        self.pool.close()
-        self.pool.join()
+        results = self.pool.map_async(fuction, list(zip(local_dirs, remote_dirs)))
         logger.info("Stopped with results: {}".format(results))
         return results
+
+    def exit(self):
+        self.pool.close()
+        self.pool.join()
 
 
 class RemoteConnect:
@@ -42,6 +44,10 @@ class RemoteConnect:
         self.local_path = local_path
         self.password = password
         self.password_file = password_file
+        self.sshpass_binary_path = spawn.find_executable("sshpass")
+        if self.password_file or self.password:
+            if self.sshpass_binary_path is None:
+                raise ValueError("Make sure to install sshpass")
         self.identityfile = identityfile
         self.testmode = testmode
         self.max_depth = maxdepth
@@ -62,9 +68,12 @@ class RemoteConnect:
         self._map_top_dirs(self.top_node)
 
     def synchronize_directories(self):
-        self.pool.start(_transfer_dir,self._get_lowest_dirs(),self._get_lowest_dirs(remote_dirs=True))
-        #self.pool.start(fubar,self._get_lowest_dirs(),self._get_lowest_dirs(remote_dirs=True))
-
+        transfer_function = self._transfer_dir
+        if self.testmode:
+            transfer_function = partial(_transfer_dir,testmode=False,password=self.password)
+        return self.pool.start(transfer_function,
+                               self._get_lowest_dirs(),
+                               self._get_lowest_dirs(remote_dirs=True))
 
     def _get_password_from_file(self):
         with open(self.password_file, "r") as pwfile:
@@ -140,13 +149,17 @@ class RemoteConnect:
             logger.info("depth is {}".format(depth))
             depth = self._translate_depth_to_string(depth)
             exclude_command = "--exclude=\"{}\"".format(depth)
+        sshpass_command = ""
+        if self.password or self.password_file:
+            sshpass_command = "{} -p {} ".format(self.sshpass_binary_path, self.password)
 
         if not self.testmode:
-            rsync_call = "{rsync} -ar {ssh_com} {exclude_com} {user}@{host}:{remote_path}/ {local_path}".format(
+            rsync_call = "{sshpass_com} {rsync} -ar {ssh_com} {exclude_com} {user}@{host}:{remote_path}/ {local_path}".format(
                 rsync=self.rsync_binary_path,
                 exclude_depth=depth,
                 user=self.user,
                 host=self.host,
+                sshpass_com=sshpass_command,
                 ssh_com=ssh_command,
                 exclude_com=exclude_command,
                 remote_path=remote_path,
@@ -158,14 +171,13 @@ class RemoteConnect:
                 remote_path=remote_path,
                 local_path=local_path)
 
-        logger.info("calling rsync with {}".format(rsync_call))
+        logger.info("calling rsync with {}".format(rsync_call).replace(self.password,"XXX"))
         call(rsync_call, shell=True)
 
-def fubar(arg1):
-    print(arg1)
 
 def _transfer_dir(*args, identityfile=None,rsync_binary_path="/usr/bin/rsync",
-                  ssh_binary_path="/usr/bin/ssh",user=None,host=None, testmode=True):
+                  ssh_binary_path="/usr/bin/ssh",sshpass_binary_path="/usr/bin/sshpass",
+                  user=None,host=None,password=None, testmode=True):
     local_path = args[0][0]
     remote_path = args[0][1]
     ssh_command = ""
@@ -173,11 +185,16 @@ def _transfer_dir(*args, identityfile=None,rsync_binary_path="/usr/bin/rsync",
         ssh_command = "-e \"{} -i {}\"".format(ssh_binary_path, identityfile)
     exclude_command = ""
 
+    sshpass_command = ""
+    if password:
+        sshpass_command = "{} -p {} ".format(sshpass_binary_path, password)
+
     if not testmode:
-        rsync_call = "{rsync} -ar {ssh_com} {user}@{host}:{remote_path}/ {local_path}".format(
+        rsync_call = "{sshpass_com} {rsync} -ar {ssh_com} {user}@{host}:{remote_path}/ {local_path}".format(
             rsync=rsync_binary_path,
             user=user,
             host=host,
+            sshpass_com=sshpass_command,
             ssh_com=ssh_command,
             exclude_com=exclude_command,
             remote_path=remote_path,
@@ -190,7 +207,7 @@ def _transfer_dir(*args, identityfile=None,rsync_binary_path="/usr/bin/rsync",
             local_path=local_path)
 
     logger.info("calling rsync with {}".format(rsync_call))
-    call(rsync_call, shell=True)
+    return call(rsync_call, shell=True)
 
 
 def parse_args():
@@ -202,8 +219,8 @@ def parse_args():
     parser.add_argument("--password", action="store")
     parser.add_argument("--password-file", action="store")
     parser.add_argument("--max-processes", action="store", type=int)
-    parser.add_argument("--remote-dir", "-r", action="store")
-    parser.add_argument("--local-dir", "-l", action="store")
+    parser.add_argument("--remote-path", "-r", action="store", required=True)
+    parser.add_argument("--local-path", "-l", action="store", required=True)
     parser.add_argument("--max-depth", '-d', action="store", type=int)
     parser.add_argument("--max-threads", "-t", action="store", type=int)
     parser.add_argument("--testmode", action="store_true")
@@ -214,8 +231,8 @@ def main():
     args = parse_args()
     rcon = RemoteConnect(args.host,
                          args.user,
-                         args.remote_dir,
-                         args.local_dir,
+                         args.remote_path,
+                         args.local_path,
                          port=args.port,
                          password=args.password,
                          password_file=args.password_file,
