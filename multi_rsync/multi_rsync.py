@@ -34,7 +34,7 @@ class RemoteConnect:
 
     def __init__(self, host, user, remote_path, local_path,
                  port=None, password=None, password_file=None, identityfile=None, testmode=False,
-                 maxdepth=2, maxprocesses=cpu_count()):
+                 maxdepth=2, maxprocesses=cpu_count(), rsync_args=""):
         self.host = host
         self.port = port
         self.user = user
@@ -51,6 +51,7 @@ class RemoteConnect:
         self.max_depth = maxdepth
         self.rsync_binary_path = spawn.find_executable("rsync")
         self.ssh_binary_path = spawn.find_executable("ssh")
+        self.additional_rsync_args = rsync_args
         self.top_node = Node(self.local_path)
         self.pool = ProcessPool(maxprocesses)
 
@@ -158,19 +159,21 @@ class RemoteConnect:
             sshpass_command = "{} -p {} ".format(self.sshpass_binary_path, self.password)
 
         if not self.testmode:
-            rsync_call = "{sshpass_com} {rsync} -ar {ssh_com} {exclude_com} {user}@{host}:{remote_path}/ {local_path}".format(
+            rsync_call = "{sshpass_com} {rsync} {rsync_args} -ar {ssh_com} {exclude_com} {user}@{host}:{remote_path}/ {local_path}".format(
                 rsync=self.rsync_binary_path,
                 exclude_depth=depth,
                 user=self.user,
                 host=self.host,
+                rsync_args=self.additional_rsync_args,
                 sshpass_com=sshpass_command,
                 ssh_com=ssh_command,
                 exclude_com=exclude_command,
                 remote_path=remote_path,
                 local_path=local_path)
         else:
-            rsync_call = "{rsync} -ar {exclude_com} {remote_path}/ {local_path}".format(
+            rsync_call = "{rsync} {rsync_args} -ar {exclude_com} {remote_path}/ {local_path}".format(
                 rsync=self.rsync_binary_path,
+                rsync_args=self.additional_rsync_args,
                 exclude_com=exclude_command,
                 remote_path=remote_path,
                 local_path=local_path)
@@ -193,6 +196,7 @@ def parse_args():
     parser.add_argument("--local-path", "-l", action="store", required=True)
     parser.add_argument("--max-depth", '-d', action="store", type=int)
     parser.add_argument("--max-threads", "-t", action="store", type=int)
+    parser.add_argument("--additional-rsync-args", action="store")
     parser.add_argument("--testmode", action="store_true")
     return parser.parse_args()
 
@@ -208,6 +212,7 @@ def main():
                          password_file=args.password_file,
                          identityfile=args.identity_file,
                          maxdepth=args.max_depth,
+                         rsync_args=args.additional_rsync_args,
                          testmode=args.testmode)
     rcon.initialize_directories()
     if any(rcon.synchronize_directories()):
